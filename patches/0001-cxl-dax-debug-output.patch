@@ -1,0 +1,180 @@
+diff --git a/drivers/cxl/Makefile b/drivers/cxl/Makefile
+index 2caa90fa4..2651fccf1 100644
+--- a/drivers/cxl/Makefile
++++ b/drivers/cxl/Makefile
+@@ -19,3 +19,7 @@ cxl_acpi-y := acpi.o
+ cxl_pmem-y := pmem.o security.o
+ cxl_mem-y := mem.o
+ cxl_pci-y := pci.o
++
++# DEBUG (local verification patch): compile every dev_dbg()/pr_debug() in
++# drivers/cxl and drivers/cxl/core as enabled-by-default (printed to dmesg).
++subdir-ccflags-y += -DDEBUG
+diff --git a/drivers/cxl/pci.c b/drivers/cxl/pci.c
+index c7c91e8dc..cfaafd200 100644
+--- a/drivers/cxl/pci.c
++++ b/drivers/cxl/pci.c
+@@ -779,6 +779,20 @@ static struct attribute_group cxl_rcd_group = {
+ };
+ __ATTRIBUTE_GROUPS(cxl_rcd);
+ 
++/*
++ * DEBUG (local verification patch): report every cxl_pci_probe() exit in
++ * dmesg at KERN_ERR, including the -ENXIO/-ENODEV exits the driver core only
++ * logs at debug level and the exits after devm_cxl_add_classdev() whose memN
++ * is devm-unwound.
++ */
++#define cxl_probe_fail(pdev, step, rc)					\
++	({								\
++		int __rc = (rc);					\
++		dev_err(&(pdev)->dev, "cxl_pci_probe: %s failed: %d (%pe)\n", \
++			step, __rc, ERR_PTR(__rc));			\
++		__rc;							\
++	})
++
+ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ {
+ 	struct pci_host_bridge *host_bridge = pci_find_host_bridge(pdev->bus);
+@@ -794,7 +808,7 @@ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 
+ 	rc = pcim_enable_device(pdev);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "pcim_enable_device", rc);
+ 	pci_set_master(pdev);
+ 
+ 	dvsec = pci_find_dvsec_capability(pdev, PCI_VENDOR_ID_CXL,
+@@ -804,7 +818,7 @@ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 
+ 	mds = cxl_memdev_state_create(&pdev->dev, pci_get_dsn(pdev), dvsec);
+ 	if (IS_ERR(mds))
+-		return PTR_ERR(mds);
++		return cxl_probe_fail(pdev, "cxl_memdev_state_create", PTR_ERR(mds));
+ 	cxlds = &mds->cxlds;
+ 	pci_set_drvdata(pdev, cxlds);
+ 
+@@ -812,11 +826,11 @@ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 
+ 	rc = cxl_pci_setup_regs(pdev, CXL_REGLOC_RBI_MEMDEV, &map);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "cxl_pci_setup_regs(MEMDEV)", rc);
+ 
+ 	rc = cxl_map_device_regs(&map, &cxlds->regs);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "cxl_map_device_regs", rc);
+ 
+ 	/*
+ 	 * If the component registers can't be found, the cxl_pci driver may
+@@ -826,7 +840,7 @@ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 				&cxlds->reg_map);
+ 	if (rc) {
+ 		if (rc == -EPROBE_DEFER)
+-			return rc;
++			return cxl_probe_fail(pdev, "cxl_pci_setup_regs(COMPONENT)", rc);
+ 		dev_warn(&pdev->dev, "No component registers (%d)\n", rc);
+ 	} else if (!cxlds->reg_map.component_map.ras.valid) {
+ 		dev_dbg(&pdev->dev, "RAS registers not found\n");
+@@ -834,7 +848,7 @@ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 
+ 	rc = cxl_pci_type3_init_mailbox(cxlds);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "cxl_pci_type3_init_mailbox", rc);
+ 
+ 	rc = cxl_await_media_ready(cxlds);
+ 	if (rc == 0)
+@@ -846,31 +860,31 @@ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 
+ 	rc = cxl_pci_setup_mailbox(mds, irq_avail);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "cxl_pci_setup_mailbox", rc);
+ 
+ 	rc = cxl_enumerate_cmds(mds);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "cxl_enumerate_cmds", rc);
+ 
+ 	rc = cxl_set_timestamp(mds);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "cxl_set_timestamp", rc);
+ 
+ 	rc = cxl_poison_state_init(mds);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "cxl_poison_state_init", rc);
+ 
+ 	rc = cxl_dev_state_identify(mds);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "cxl_dev_state_identify", rc);
+ 
+ 	rc = cxl_mem_dpa_fetch(mds, &range_info);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "cxl_mem_dpa_fetch", rc);
+ 
+ 	rc = cxl_dpa_setup(cxlds, &range_info);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "cxl_dpa_setup", rc);
+ 
+ 	rc = devm_cxl_setup_features(cxlds);
+ 	if (rc)
+@@ -878,15 +892,15 @@ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 
+ 	cxlmd = devm_cxl_add_classdev(cxlds);
+ 	if (IS_ERR(cxlmd))
+-		return PTR_ERR(cxlmd);
++		return cxl_probe_fail(pdev, "devm_cxl_add_classdev", PTR_ERR(cxlmd));
+ 
+ 	rc = devm_cxl_setup_fw_upload(&pdev->dev, mds);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "devm_cxl_setup_fw_upload", rc);
+ 
+ 	rc = devm_cxl_sanitize_setup_notifier(&pdev->dev, cxlmd);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "devm_cxl_sanitize_setup_notifier", rc);
+ 
+ 	rc = devm_cxl_setup_fwctl(&pdev->dev, cxlmd);
+ 	if (rc)
+@@ -894,7 +908,7 @@ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 
+ 	pmu_count = cxl_count_regblock(pdev, CXL_REGLOC_RBI_PMU);
+ 	if (pmu_count < 0)
+-		return pmu_count;
++		return cxl_probe_fail(pdev, "cxl_count_regblock(PMU)", pmu_count);
+ 
+ 	for (i = 0; i < pmu_count; i++) {
+ 		struct cxl_pmu_regs pmu_regs;
+@@ -920,10 +934,12 @@ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 
+ 	rc = cxl_event_config(host_bridge, mds, irq_avail);
+ 	if (rc)
+-		return rc;
++		return cxl_probe_fail(pdev, "cxl_event_config", rc);
+ 
+ 	pci_save_state(pdev);
+ 
++	dev_info(&pdev->dev, "cxl_pci_probe: done, %s registered\n",
++		 dev_name(&cxlmd->dev));
+ 	return rc;
+ }
+ 
+diff --git a/drivers/dax/Makefile b/drivers/dax/Makefile
+index c0bc6eb1e..f1fce2b62 100644
+--- a/drivers/dax/Makefile
++++ b/drivers/dax/Makefile
+@@ -13,3 +13,7 @@ device_dax-y := device.o
+ dax_pmem-y := pmem.o
+ dax_cxl-y := cxl.o
+ fsdev_dax-y := fsdev.o
++
++# DEBUG (local verification patch): dev_dbg()/pr_debug() in drivers/dax and
++# drivers/dax/hmem enabled by default.
++subdir-ccflags-y += -DDEBUG

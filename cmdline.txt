@@ -1,0 +1,20 @@
+# Boot parameters for the v7.3 CXL debug kernel.
+# Add to GRUB_CMDLINE_LINUX (or one-shot via grub-reboot / edit at the GRUB menu).
+#
+# log_buf_len=64M : the debug kernel prints a lot (DEBUG_DRIVER, PCI_DEBUG, -DDEBUG in cxl/dax); keep it all.
+# initcall_debug  : driver core prints "probe of <dev> with driver <drv> returned <rc> after N usecs"
+#                   for EVERY probe (drivers/base/dd.c:794), so even silent -ENXIO/-ENODEV show their errno.
+# efi=debug       : prints the EFI memory map with the "SP" (EFI_MEMORY_SP / Soft Reserved) attribute,
+#                   i.e. what the BIOS reported for the CXL HPA.
+log_buf_len=64M initcall_debug efi=debug
+
+# Optional, append when needed:
+#   pci=earlydump   dump config space of every PCI device before any driver touches it (DVSECs as the BIOS left them)
+#   ignore_loglevel also send KERN_DEBUG to the console. Not needed for dmesg (dmesg already has every level);
+#                   avoid it on a slow serial console, it can stall boot.
+#   cxl_pci.mbox_ready_timeout=<s>    default 60 (drivers/cxl/pci.c:54)
+#   cxl_core.media_ready_timeout=<s>  default 60 (drivers/cxl/core/pci.c:24)
+
+# Fallback when booting a kernel WITHOUT patches/0001 (no -DDEBUG): turn the dev_dbg sites on per module.
+# (CXL/DAX are modules, so a bare dyndbg= does not reach them.)
+#   cxl_core.dyndbg=+pmf cxl_acpi.dyndbg=+pmf cxl_pci.dyndbg=+pmf cxl_mem.dyndbg=+pmf cxl_port.dyndbg=+pmf dax.dyndbg=+pmf dax_cxl.dyndbg=+pmf dax_hmem.dyndbg=+pmf kmem.dyndbg=+pmf
