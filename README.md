@@ -10,7 +10,9 @@ git clone <this repo> && cd cxl-debug-kernel
 cd linux-7.3 && make -j"$(nproc)"
 sudo make modules_install && sudo make install
 # add cmdline.txt parameters to the kernel command line, reboot into 7.3.0-cxldbg
+sudo tools/cxl-collect.sh --bdf 0000:xx:00.0       # BIOS + OS state, triage verdict, one tar.gz
 ```
+See `RUNBOOK.md` for the full one-session sequence.
 
 ## Why kernel parameters alone are not enough
 
@@ -28,6 +30,9 @@ The driver core reports `-ENXIO` and `-ENODEV` only at debug level (`drivers/bas
 | `config/cxl-debug.config` | The Kconfig fragment. The CXL/DAX stack is built as modules, like distros do, including `CXL_REGION` and `CXL_ATL` (the AMD PRM address translation). It also turns on `DEBUG_DRIVER`, `PCI_DEBUG`, `DYNAMIC_DEBUG`, `FUNCTION_GRAPH_RETVAL`, kprobe/BPF events, a 32 MB log buffer and `IKCONFIG_PROC`. |
 | `cmdline.txt` | Boot parameters: `log_buf_len=64M initcall_debug efi=debug`, plus optional ones and a per-module `dyndbg` fallback for kernels built without the patch. |
 | `setup.sh` | Clones v7.3 from torvalds/linux (shallow; `--stable v7.3.N` takes a stable point release from gregkh/linux instead), applies the patch and merges the fragment onto your base config. It then runs `olddefconfig` and **fails if any fragment option was dropped**. It also clears the distro signing-cert settings and sets `LOCALVERSION=-cxldbg`. |
+| `RUNBOOK.md` | Step-by-step plan for one session on the target (Korean): build in the background, collect on the distro kernel, re-probe without reboot, one-shot boot of the debug kernel, collect again, compare with a working device. |
+| `tools/cxl-collect.sh` | Read-only collector, run as root: BIOS version, ACPI CEDT/SRAT/HMAT (raw + iasl), ACPI0016/0017, `/sys/firmware/memmap`, `/proc/iomem`, `lspci -vvv -xxxx` of every class-0502 function and its upstream ports, all `/sys/bus/cxl` and dax attributes, NUMA, modules, dmesg/journal and a grep summary. Runs `cxl_triage.py` and packs everything into one tar.gz. `--enable-dyndbg` turns on dev_dbg for loaded CXL/DAX modules. |
+| `tools/cxl_triage.py` | Read-only ladder (DEVICE / BIOS / KERNEL / BYDESIGN) that prints the first failing stage between the PCI function and `/dev/daxX.Y`, with its owner. Tested on synthetic sysfs trees only. |
 | `tools/reprobe-trace.sh` | Retries the probe of a device that currently has **no driver bound**, using `function_graph` with return values limited to `cxl_pci_probe`. Saves the trace, the bind errno and the dmesg delta. It never unbinds anything. |
 
 Tested: the fragment merged onto `x86_64_defconfig` and survived `olddefconfig` with every option intact, and `drivers/cxl` and `drivers/dax` compiled without warnings with the patch applied. Not tested on CXL hardware yet.
