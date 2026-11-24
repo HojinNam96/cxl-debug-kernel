@@ -155,8 +155,8 @@ tail -f setup.log                                # 끝나면 ">> built 7.3.0-cxl
 - 부팅 파라미터 `log_buf_len=64M initcall_debug efi=debug panic=30`은 커널에 **내장**된다(`CONFIG_CMDLINE`). GRUB을 고칠 필요가 없다.
 - 결과 커널은 `7.3.0-cxldbg`, 빌드 로그는 `linux-7.3/build.log`이다.
 - **걸리는 시간과 공간** (아래 "검증"의 측정값 참고):
-  - 배포판 config는 모듈이 약 6,000개라 오래 걸린다. 16코어 기준 약 1시간이고, 코어 수에 반비례한다. 128코어 이상 Venice라면 10~15분이다.
-  - 디스크: 빌드 트리 약 15~25 GiB, `/boot` 약 300 MiB, `/lib/modules` 약 2 GiB(strip 기준).
+  - 실측: Ubuntu 24.04 배포판 config(모듈 6,284개, debug info 끔) 전체 빌드가 16코어에서 13분이었다. 대략 코어 수에 반비례하므로 코어가 많은 Venice 서버에서는 몇 분이면 된다. 대상 서버의 gcc가 더 오래된 버전이면 조금 다를 수 있다.
+  - 디스크(실측): 빌드 트리 6.8 GiB, strip한 `/lib/modules/7.3.0-cxldbg` 530 MiB. `/boot`에는 약 300 MiB가 필요하다(initramfs 포함, 추정).
   - 대용량 메모리/CXL 서버는 재부팅(POST)에 5~15분 걸린다. F~G에 최소 30분을 잡는다.
 
 ## D. 현재 커널에서 수집 (읽기 전용)
@@ -328,4 +328,7 @@ grep -E "probe of .* returned -" cxl-collect-*-cxldbg-*/log/dmesg.txt | head -20
 | AlmaLinux 10.3 (6.12.0-264.19.1.el10_3) | OK. 모듈 압축 xz 유지, `WERROR` off | OK, 경고 0 |
 
 - 네 config 모두 결과 `.config`에 `CXL_ATL=y`, `CMDLINE_BOOL=y`, `LOCALVERSION="-cxldbg"`가 들어갔다.
-- 배포판 config 전체 빌드 시간: Ubuntu 24.04 config(모듈 6,084개) 측정 중. 결과가 나오면 이 줄을 갱신한다.
+- **Ubuntu 24.04 config 전체 빌드:**
+  - `make -j16`이 13분(775초) 걸렸고 rc=0이다.
+  - 모듈은 6,284개 나왔다. 경고 16건은 모두 다른 드라이버의 frame-size 경고이고, cxl/dax에는 0건이다.
+  - `make INSTALL_MOD_STRIP=1 modules_install`(모듈 서명 포함)도 통과했고 크기는 530 MiB이다.
