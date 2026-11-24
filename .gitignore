@@ -2,3 +2,5 @@
 !/linux-7.3/
 *.o
 *.ko
+/setup.log
+/linux-7.3/build.log

@@ -352,3 +352,7 @@ grep -E "probe of .* returned -" cxl-collect-*-cxldbg-*/log/dmesg.txt | head -20
   - `make -j16`이 13분(775초) 걸렸고 rc=0이다.
   - 모듈은 6,284개 나왔다. 경고 16건은 모두 다른 드라이버의 frame-size 경고이고, cxl/dax에는 0건이다.
   - `make INSTALL_MOD_STRIP=1 modules_install`(모듈 서명 포함)도 통과했고 크기는 530 MiB이다.
+- **저장소 clone으로 빌드 (2026-11-24):**
+  - `git clone --depth 1`로 받은 저장소에는 `linux-7.3/`의 96,080개 항목(symlink 102개 포함)이 다 들어 있었다. `.git` 크기는 297 MB이다.
+  - setup.sh는 `using existing kernel tree`, `debug patch already applied`를 찍고 넘어갔다. defconfig 전체 빌드까지 113초 걸렸다.
+  - `kernelrelease`는 `+` 없이 `7.3.0-cxldbg`이다.
