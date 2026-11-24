@@ -4,15 +4,19 @@
 # memN / regionN / daxX.Y, run tools/cxl_triage.py, and pack everything into one tar.gz. Run as root.
 #
 #   sudo tools/cxl-collect.sh [--bdf 0000:xx:yy.z] [--enable-dyndbg] [--tag NAME] [--outdir DIR]
+#                             [--no-mmio] [--with-mbox]
 #
-# Read-only by default: nothing is bound, unbound, reset or sent to the device. MMIO status/decoder
-# registers are read by cxl_triage.py (side-effect free); add --no-mmio to skip that.
+# Read-only by default: nothing is bound, unbound or reset, and no CXL mailbox command is sent.
+# It reads config space, ACPI tables, sysfs (cached values) and dmesg; cxl_triage.py also reads a few
+# MMIO status/decoder registers (plain loads, skipped when Memory Space is disabled; --no-mmio skips all).
+# --with-mbox additionally runs 'cxl list -vvv', which DOES send mailbox queries to each memdev
+#             (Get Health Info, Get Partition Info, Get Poison List, ...). Off by default.
 # --enable-dyndbg writes "+pmf" for the CXL/DAX modules into /proc/dynamic_debug/control (more dmesg
 # output from now on; affects nothing else). It only covers modules that are already loaded.
 set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-BDF=""; DYNDBG=0; TAG=""; OUTDIR=$PWD; NOMMIO=""
+BDF=""; DYNDBG=0; TAG=""; OUTDIR=$PWD; NOMMIO=""; MBOX=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--bdf) BDF=$2; shift 2 ;;
@@ -20,11 +24,16 @@ while [ $# -gt 0 ]; do
 	--tag) TAG=-$2; shift 2 ;;
 	--outdir) OUTDIR=$2; shift 2 ;;
 	--no-mmio) NOMMIO=--no-mmio; shift ;;
-	-h|--help) sed -n '3,12p' "$0"; exit 0 ;;
+	--with-mbox) MBOX=1; shift ;;
+	-h|--help) sed -n '3,15p' "$0"; exit 0 ;;
 	*) echo "unknown option: $1" >&2; exit 2 ;;
 	esac
 done
 [ "$(id -u)" = 0 ] || { echo "run as root (config space, ACPI tables, iomem addresses and dmesg need it)" >&2; exit 1; }
+if [ -n "$BDF" ]; then
+	case "$BDF" in ????:??:??.?) ;; ??:??.?) BDF=0000:$BDF ;; esac      # accept lspci's short form
+	[ -e "/sys/bus/pci/devices/$BDF" ] || { echo "no such PCI device: $BDF (use the full form 0000:bb:dd.f, see lspci -D)" >&2; exit 1; }
+fi
 
 NAME=cxl-collect-$(uname -r)$TAG-$(date +%Y%m%d-%H%M%S)
 O=$OUTDIR/$NAME
@@ -39,7 +48,8 @@ dumpattrs() {
 	find -L "$1" -maxdepth "${2:-1}" -type f -readable \
 		! -name uevent ! -name remove ! -name bind ! -name unbind ! -name new_id ! -name remove_id \
 		! -name rescan ! -name reset ! -name 'trigger_*' ! -name config ! -name 'resource[0-9]*' \
-		! -name rom ! -name cdat ! -name data ! -name 'label*' ! -name 'sanitize' ! -name 'secure_erase' \
+		! -name rom ! -name vpd ! -name cdat ! -name data ! -name label ! -name sanitize \
+		! -name acpi_index ! -name wait_probe ! -path '*/security/state' \
 		2>/dev/null | sort | while read -r f; do
 		printf '%s = %s\n' "$f" "$(timeout 2 head -c 512 "$f" 2>&1 | tr '\n' ' ')"
 	done
@@ -51,7 +61,11 @@ if [ "$DYNDBG" = 1 ]; then
 	[ -w $C ] || C=/sys/kernel/debug/dynamic_debug/control
 	if [ -w "$C" ]; then
 		for m in cxl_core cxl_acpi cxl_pci cxl_mem cxl_port cxl_pmem dax dax_cxl dax_hmem kmem device_dax; do
-			echo "module $m +pmf" > "$C" 2>/dev/null && echo "   dyndbg on: $m" || echo "   dyndbg skip: $m (not loaded / no sites)"
+			if grep -q "\[$m\]" "$C" 2>/dev/null; then
+				echo "module $m +pmf" > "$C" && echo "   dyndbg on: $m ($(grep -c "\[$m\]" "$C") sites)"
+			else
+				echo "   dyndbg skip: $m (not loaded / no debug sites)"
+			fi
 		done
 	else
 		echo "   dynamic_debug control not writable (CONFIG_DYNAMIC_DEBUG off, or lockdown)" >&2
@@ -110,7 +124,7 @@ for b in $CXLDEVS; do
 		p=$(readlink -f "/sys/bus/pci/devices/$b")
 		while p=$(dirname "$p"); [ -e "$p/config" ]; do
 			u=$(basename "$p")
-			echo; echo "### upstream $u"; lspci -vvv -s "$u"
+			echo; echo "### upstream $u"; lspci -vvv -xxxx -s "$u"
 		done
 		echo; echo "### sysfs attrs $b"; dumpattrs "/sys/bus/pci/devices/$b"
 		echo "driver -> $(readlink "/sys/bus/pci/devices/$b/driver" 2>/dev/null || echo NONE)"
@@ -127,7 +141,11 @@ for d in /sys/bus/cxl/devices/*; do
 	echo "driver -> $(basename "$(readlink "$d/driver" 2>/dev/null)" 2>/dev/null || echo NONE)"
 	dumpattrs "$d" 2
 done > "$O/cxl/sysfs-cxl-all.txt" 2>&1
-have cxl && { run cxl/cxl-list.txt cxl list -vvv; run cxl/cxl-list-idle.txt cxl list -vvv -i; }
+# -vv lists buses/ports/endpoints/decoders/regions from sysfs only; -vvv adds mailbox queries (opt-in)
+if have cxl; then
+	run cxl/cxl-list.txt cxl list -vv; run cxl/cxl-list-idle.txt cxl list -vv -i
+	[ "$MBOX" = 1 ] && run cxl/cxl-list-vvv-mbox.txt cxl list -vvv
+fi
 have daxctl && run dax/daxctl-list.txt daxctl list -vvv
 run dax/ls-dax-devices.txt ls -la /sys/bus/dax/devices/
 for d in /sys/bus/dax/devices/*; do [ -e "$d" ] && { echo "===== $(basename "$d")"; dumpattrs "$d" 2; }; done > "$O/dax/sysfs-dax-all.txt" 2>&1
@@ -180,12 +198,27 @@ fi
 		mem=$(ls -d /sys/bus/pci/devices/$b/mem* 2>/dev/null | xargs -r -n1 basename | tr '\n' ' ')
 		echo "PCI $b class=$(cat /sys/bus/pci/devices/$b/class) driver=${drv:-NONE} memdev=${mem:-NONE}"
 	done
-	echo; echo "---- cxl_pci_probe / failed lines ----"
-	grep -E 'cxl_pci_probe|failed|rejects match|returned -' "$O/log/dmesg.txt" | grep -iE 'cxl|dax|mem[0-9]|port[0-9]|region|decoder' | tail -40
+	echo; echo "---- first cxl_pci_probe / failed lines (first 40) ----"
+	grep -E 'cxl_pci_probe|failed|rejects match|returned -' "$O/log/dmesg.txt" | grep -iE 'cxl|dax|mem[0-9]|port[0-9]|region|decoder' | head -40
 	echo; echo "---- triage first failing stage ----"
 	sed -n '/^VERDICT/,/^ *$/p' "$O/TRIAGE.txt" 2>/dev/null | head -25
 } > "$O/SUMMARY.txt" 2>&1
+
+# SHORT.txt: the ~15 lines to copy by hand when no file may leave the network
+{
+	echo "K $(uname -r) | BIOS $(cat /sys/class/dmi/id/bios_version /sys/class/dmi/id/bios_date 2>/dev/null | tr '\n' ' ')| cmdline-has-initcall_debug=$(grep -qw initcall_debug /proc/cmdline && echo y || echo n)"
+	echo "ACPI $(cd /sys/firmware/acpi/tables 2>/dev/null && for t in CEDT SRAT HMAT; do [ -e $t ] && printf '%s=y ' $t || printf '%s=n ' $t; done)ACPI0017=$(ls -d /sys/bus/acpi/devices/ACPI0017:* 2>/dev/null | wc -l) ACPI0016=$(ls -d /sys/bus/acpi/devices/ACPI0016:* 2>/dev/null | wc -l) | memmap-SoftReserved=$(grep -ci 'soft reserved' "$O/mem/firmware-memmap.txt") | CFMWS/CHBS lines: $(grep -c -E 'CFMWS|CHBS' "$O/TRIAGE.txt" 2>/dev/null)"
+	grep '^PCI ' "$O/SUMMARY.txt"
+	echo "cxl: mem=$(ls -d /sys/bus/cxl/devices/mem* 2>/dev/null | wc -l) endpoint=$(ls -d /sys/bus/cxl/devices/endpoint* 2>/dev/null | wc -l) region=$(ls -d /sys/bus/cxl/devices/region* 2>/dev/null | wc -l) decoder=$(ls -d /sys/bus/cxl/devices/decoder* 2>/dev/null | wc -l)  dax=$(ls /sys/bus/dax/devices 2>/dev/null | tr '\n' ' ')"
+	if [ -n "$BDF" ]; then
+		echo "DUT $BDF first lines:"
+		grep -F "$BDF" "$O/log/dmesg.txt" | grep -E 'cxl_pci_probe|probe of|rejects match|failed|Media|mailbox|registers' | head -4 | cut -c1-200
+	fi
+	sed -n '/^VERDICT/,/^ *$/p' "$O/TRIAGE.txt" 2>/dev/null | grep -E 'first failing stage|evidence|meaning|next' | head -4 | cut -c1-240
+} > "$O/SHORT.txt" 2>&1
 cat "$O/SUMMARY.txt"
+echo; echo "======== SHORT.txt (copy these lines if files cannot leave the network) ========"
+cat "$O/SHORT.txt"
 
 tar -C "$OUTDIR" -czf "$OUTDIR/$NAME.tar.gz" "$NAME"
 echo

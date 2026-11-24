@@ -1,12 +1,15 @@
 # Boot parameters for the v7.3 CXL debug kernel.
-# Add to GRUB_CMDLINE_LINUX (or one-shot via grub-reboot / edit at the GRUB menu).
+# The kernel built by setup.sh already has the main line below BUILT IN (CONFIG_CMDLINE in
+# config/cxl-debug.config), so nothing has to be added to GRUB/grubby for it. The text here
+# documents those parameters and lists optional extras to add at the boot loader when needed.
 #
 # log_buf_len=64M : the debug kernel prints a lot (DEBUG_DRIVER, PCI_DEBUG, -DDEBUG in cxl/dax); keep it all.
 # initcall_debug  : driver core prints "probe of <dev> with driver <drv> returned <rc> after N usecs"
-#                   for EVERY probe (drivers/base/dd.c:794), so even silent -ENXIO/-ENODEV show their errno.
+#                   for EVERY probe (drivers/base/dd.c:793 in v7.3), so even silent -ENXIO/-ENODEV show their errno.
 # efi=debug       : prints the EFI memory map with the "SP" (EFI_MEMORY_SP / Soft Reserved) attribute,
 #                   i.e. what the BIOS reported for the CXL HPA.
-log_buf_len=64M initcall_debug efi=debug
+# panic=30       : reboot 30 s after a panic (back to the pinned default kernel) instead of hanging.
+log_buf_len=64M initcall_debug efi=debug panic=30
 
 # Optional, append when needed:
 #   pci=earlydump   dump config space of every PCI device before any driver touches it (DVSECs as the BIOS left them)

@@ -390,7 +390,16 @@ def main():
                   f"Memory_Active={r['Memory_Active']} Degraded={r['Memory_Active_Degraded']} timeout={r['Memory_Active_Timeout']}")
         print(f"    Register Locator: {[f'{b['name']}@BAR{b['bir']}+{hx(b['offset'])}' for b in blocks] or 'none'}")
         hdm = mds = None
-        if not a.no_mmio:
+        mmio_skip = None
+        if len(cfg) >= 6 and not (u16(cfg, 4) & 0x2):
+            mmio_skip = "PCI Command Memory Space Enable=0 (a read would only produce Unsupported Requests / AER noise)"
+        else:
+            ps = rd(f"/sys/bus/pci/devices/{bdf}/power_state", "")
+            if ps and ps not in ("D0", "unknown"):
+                mmio_skip = f"function is in {ps}, not D0"
+        if mmio_skip and not a.no_mmio and blocks:
+            print(f"    MMIO skipped: {mmio_skip}")
+        if not a.no_mmio and not mmio_skip:
             for b in blocks:
                 try:
                     if b["id"] == 1:

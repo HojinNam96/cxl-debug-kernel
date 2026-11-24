@@ -19,12 +19,20 @@ if [ -e "$DEV/driver" ]; then
 	echo "$BDF is bound to $(basename "$(readlink "$DEV/driver")"); refusing (this script never unbinds)" >&2
 	exit 1
 fi
-modprobe cxl_pci 2>/dev/null || true
-[ -e /sys/bus/pci/drivers/cxl_pci/bind ] || { echo "cxl_pci driver not available" >&2; exit 1; }
-[ -d "$T/options" ] || { echo "tracefs not found (CONFIG_FTRACE / lockdown?)" >&2; exit 1; }
-
 mkdir -p "$OUT"
 dmesg > "$OUT/dmesg-before.txt"
+if [ ! -d /sys/module/cxl_pci ]; then
+	# loading the module probes every matching unbound device right away, before tracing is set up
+	modprobe cxl_pci 2>/dev/null || true
+	if [ -e "$DEV/driver" ]; then
+		dmesg > "$OUT/dmesg-after.txt"
+		diff "$OUT/dmesg-before.txt" "$OUT/dmesg-after.txt" | sed -n 's/^> //p' > "$OUT/dmesg-delta.txt" || true
+		echo "loading cxl_pci probed and BOUND $BDF (it was simply not loaded before). See $OUT/dmesg-delta.txt" >&2
+		exit 0
+	fi
+fi
+[ -e /sys/bus/pci/drivers/cxl_pci/bind ] || { echo "cxl_pci driver not available (modinfo cxl_pci; kernel config CXL_PCI)" >&2; exit 1; }
+[ -d "$T/options" ] || { echo "tracefs not found (CONFIG_FTRACE off?). Plain retry without trace: echo $BDF > /sys/bus/pci/drivers/cxl_pci/bind; dmesg | tail -50" >&2; exit 1; }
 
 restore() {
 	echo nop > "$T/current_tracer" 2>/dev/null || true
@@ -51,5 +59,9 @@ dmesg > "$OUT/dmesg-after.txt"
 diff "$OUT/dmesg-before.txt" "$OUT/dmesg-after.txt" | sed -n 's/^> //p' > "$OUT/dmesg-delta.txt" || true
 
 cat "$OUT/bind-result.txt"
+if ! grep -q cxl_pci_probe "$OUT/trace.txt"; then
+	echo "NOTE: cxl_pci_probe never ran: the driver did not match the device (class code != 0x050210?)," \
+	     "so 'No such device' here is a match failure, not a probe failure." | tee -a "$OUT/bind-result.txt"
+fi
 grep -E "cxl_pci_probe|$BDF" "$OUT/dmesg-delta.txt" | tail -40 || true
 echo "saved in $OUT/"
