@@ -3,6 +3,8 @@
 # Run on a machine WITH internet. Produces one file to carry into the closed network:
 #   cxl-debug-kernel-offline-v7.3.tar  =  linux-7.3.tar.xz (kernel.org, checksum-verified)
 #                                         + this kit (patch, config, scripts, RUNBOOK)
+# The repository's committed linux-7.3/ tree is left out of the bundle: it carries the
+# kernel.org tarball instead, which the target can check against kernel.org's checksums.
 #   ./make-offline-bundle.sh [--tarball linux-7.3.tar.xz] [--out DIR] [--split 95M] [--allow-dirty]
 # --tarball:     use an already downloaded kernel.org tarball instead of downloading it.
 # --split:       also cut the bundle into parts (for transfer systems with a size limit;
@@ -56,7 +58,7 @@ fi
 
 echo ">> kit"
 if [ "$ISGIT" = 1 ] && [ "$DIRTY" = 0 ]; then
-	git -C "$HERE" archive --format=tar --prefix=cxl-debug-kernel/ HEAD | tar -x -C "$B"
+	git -C "$HERE" archive --format=tar --prefix=cxl-debug-kernel/ HEAD -- . ':(exclude)linux-*' | tar -x -C "$B"
 	git -C "$HERE" describe --always --dirty > "$B/cxl-debug-kernel/KIT_COMMIT"
 else
 	mkdir "$B/cxl-debug-kernel"

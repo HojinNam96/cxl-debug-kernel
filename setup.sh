@@ -3,9 +3,10 @@
 # Prepare a Linux v7.3 tree with the CXL/DAX debug patch and a .config
 # (base config + config/cxl-debug.config), then optionally build it.
 #
-# OFFLINE: needs no network when the kernel source tarball is available. It looks for
-#   linux-7.3.tar.xz next to this kit or one directory up (the layout of the offline bundle),
-# or takes --tarball FILE. Only without any tarball does it try 'git clone' (needs internet).
+# OFFLINE: needs no network when the kernel source is here:
+#   - ./linux-7.3 (a clone or archive of this repository: committed, already patched), or
+#   - linux-7.3.tar.xz next to this kit or one directory up (the offline bundle), or --tarball FILE.
+# Only with neither does it try 'git clone' (needs internet).
 set -euo pipefail
 
 VERSION=v7.3

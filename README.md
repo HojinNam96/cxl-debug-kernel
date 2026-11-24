@@ -2,15 +2,19 @@
 
 A Linux **v7.3** (mainline tag from torvalds/linux) debug build for finding out why a CXL Type 3 memory device does not register (no `memN`, no region, no `daxX.Y`). With it, every failure in the CXL/DAX stack is printed in `dmesg`, and you do not have to set up dynamic debug by hand.
 
-This repository holds the patch, a Kconfig fragment, boot parameters and helper scripts. For a machine **without internet access**, `make-offline-bundle.sh` (run on a machine with internet) packs the unmodified kernel.org `linux-7.3.tar.xz` together with this kit into one file. Download it ready-made from the [Releases](https://github.com/HojinNam96/cxl-debug-kernel/releases) page.
+This repository holds the patch, a Kconfig fragment, boot parameters, helper scripts **and the complete Linux 7.3 source** in `linux-7.3/`: the unmodified kernel.org `linux-7.3.tar.xz` (commit `af4699c`), with the debug patch applied on top (commit `cedffd1`). `setup.sh` builds the whole kernel from it. A machine **without internet access** gets everything as one file, in one of two ways:
+- **This repository:** download [main.tar.gz](https://github.com/HojinNam96/cxl-debug-kernel/archive/refs/heads/main.tar.gz) (saved as `cxl-debug-kernel-main.tar.gz`), or `git clone` on Linux/WSL, and carry it in. **Do not extract or clone it on Windows itself.** 13 pairs of kernel paths differ only in case and there are 102 symlinks, so a Windows checkout silently loses or breaks files.
+- **The offline bundle** from the [Releases](https://github.com/HojinNam96/cxl-debug-kernel/releases) page (made by `make-offline-bundle.sh`): the kernel.org tarball, which can be checked against kernel.org's checksums and signature, plus the kit. It is 155 MiB, with 95 MB parts for transfer systems that have a size limit.
 
 Offline target (no network used at any step; full sequence with the boot-loader steps in `RUNBOOK.md`):
 ```bash
-tar -xf cxl-debug-kernel-offline-v7.3.tar && cd cxl-debug-kernel-offline-v7.3
-sha256sum -c --quiet SHA256SUMS
-cd cxl-debug-kernel
+# repository archive:  (a tarred clone unpacks to cxl-debug-kernel/ instead)
+tar -xzf cxl-debug-kernel-main.tar.gz && cd cxl-debug-kernel-main
+# or the offline bundle:
+tar -xf cxl-debug-kernel-offline-v7.3.tar && cd cxl-debug-kernel-offline-v7.3 && sha256sum -c --quiet SHA256SUMS && cd cxl-debug-kernel
+
 tools/check-build-deps.sh                                   # what is missing to build/install, with package names
-nohup ./setup.sh --build > setup.log 2>&1 &                 # tree: ./linux-7.3, log: linux-7.3/build.log
+nohup ./setup.sh --build > setup.log 2>&1 &                 # builds the whole kernel in ./linux-7.3, log: linux-7.3/build.log
 sudo tools/cxl-collect.sh --bdf 0000:xx:00.0 --tag distro   # distro-kernel baseline while it builds
 wait; tail -3 setup.log                                     # must show '>> built 7.3.0-cxldbg'
 # pin the current kernel as the default boot entry FIRST (RUNBOOK.md F), then:
@@ -18,7 +22,7 @@ wait; tail -3 setup.log                                     # must show '>> buil
 # one-shot boot into 7.3.0-cxldbg (grub-reboot / grub2-reboot), then from this directory:
 sudo tools/cxl-collect.sh --bdf 0000:xx:00.0 --tag cxldbg
 ```
-With internet, `./setup.sh` without a tarball does a shallow `git clone` of v7.3 from torvalds/linux instead.
+If neither `./linux-7.3` nor a tarball is present (the kit copied without the source), `./setup.sh` falls back to a shallow `git clone` of v7.3 from torvalds/linux, which needs internet.
 
 See `RUNBOOK.md` for the full one-session sequence (Korean), including what to do when build packages are missing on a closed network.
 
@@ -34,11 +38,12 @@ The driver core reports `-ENXIO` and `-ENODEV` only at debug level (`drivers/bas
 
 | file | what it does |
 |---|---|
+| `linux-7.3/` | The complete Linux 7.3 source (96,080 entries). Commit `af4699c` holds kernel.org `linux-7.3.tar.xz` (sha256 `87363c24…f004953`) unpacked and unmodified. Commit `cedffd1` applies the patch below to it. |
 | `patches/0001-cxl-dax-debug-output.patch` | Adds `-DDEBUG` to `drivers/cxl` (+`core/`) and `drivers/dax` (+`hmem/`), so every `dev_dbg`/`pr_debug` there is enabled by default (`include/linux/dynamic_debug.h:48`). In `cxl_pci_probe()`, every early return logs `cxl_pci_probe: <step> failed: <rc> (<errno>)` at KERN_ERR, and success logs `cxl_pci_probe: done, memN registered`. |
 | `config/cxl-debug.config` | The Kconfig fragment. The CXL/DAX stack is built as modules, like distros do, including `CXL_REGION` and `CXL_ATL` (the AMD PRM address translation). The boot parameters (`log_buf_len=64M initcall_debug efi=debug panic=30`) are built in with `CONFIG_CMDLINE`, so no boot-loader edit is needed. It also turns on `DEBUG_DRIVER`, `PCI_DEBUG`, `DYNAMIC_DEBUG`, `FUNCTION_GRAPH_RETVAL`, kprobe/BPF events, a 32 MB log buffer and `IKCONFIG_PROC`. |
 | `cmdline.txt` | What the built-in boot parameters do, optional extras, and a per-module `dyndbg` fallback for kernels built without the patch. |
-| `setup.sh` | Gets the v7.3 source (from `linux-7.3.tar.xz` next to the kit or `--tarball`, offline; otherwise a shallow clone from torvalds/linux), applies the patch (`patch`, else `git apply`, else checksum-verified copies from `patches/prepatched-v7.3/`), and merges the fragment onto the running kernel's config (`/boot/config-$(uname -r)` or `/proc/config.gz`). It then runs `olddefconfig` and **fails if any fragment option was dropped**. It clears distro signing-cert and SBAT paths, sets `LOCALVERSION=-cxldbg`, and turns DWARF debug info off unless `--keep-debug-info`. It also turns off `WERROR`/`OBJTOOL_WERROR`, `PANIC_ON_OOPS` and `RUST` from distro configs, accepts an `=m` request that a built-in option forced to `=y`, and adapts to missing host tools: no `zstd`/`lz4` means no module compression and a gzip kernel image, no `gawk` means no `BUILTIN_MODULE_RANGES`. Finally it runs `tools/check-build-deps.sh`, and with `--build` it builds. |
-| `make-offline-bundle.sh` | Run where there is internet: downloads `linux-7.3.tar.xz` from kernel.org, checks it against kernel.org's `sha256sums.asc` (and the PGP signature if gpg can fetch the keys), and writes `cxl-debug-kernel-offline-v7.3.tar` with `SHA256SUMS`. `--split 100M` cuts it into parts. |
+| `setup.sh` | Uses `./linux-7.3`, or else unpacks `linux-7.3.tar.xz` from next to the kit or from `--tarball` (both offline). Only otherwise does it make a shallow clone from torvalds/linux. It then applies the patch, skipping this step when the tree is already patched (`patch`, else `git apply`, else checksum-verified copies from `patches/prepatched-v7.3/`), and merges the fragment onto the running kernel's config (`/boot/config-$(uname -r)` or `/proc/config.gz`). It then runs `olddefconfig` and **fails if any fragment option was dropped**. It clears distro signing-cert and SBAT paths, sets `LOCALVERSION=-cxldbg`, and turns DWARF debug info off unless `--keep-debug-info`. It also turns off `WERROR`/`OBJTOOL_WERROR`, `PANIC_ON_OOPS` and `RUST` from distro configs, accepts an `=m` request that a built-in option forced to `=y`, and adapts to missing host tools: no `zstd`/`lz4` means no module compression and a gzip kernel image, no `gawk` means no `BUILTIN_MODULE_RANGES`. Finally it runs `tools/check-build-deps.sh`, and with `--build` it builds. |
+| `make-offline-bundle.sh` | Run where there is internet: downloads `linux-7.3.tar.xz` from kernel.org, checks it against kernel.org's `sha256sums.asc` (and the PGP signature if gpg can fetch the keys), and writes `cxl-debug-kernel-offline-v7.3.tar` with `SHA256SUMS`. The committed `linux-7.3/` is left out, since the tarball replaces it. `--split 95M` cuts it into parts. |
 | `tools/check-build-deps.sh` | Offline, read-only check of everything needed to build (compiler/binutils versions, flex/bison/bc/perl, libelf and openssl headers by compile test, tools the `.config` needs) and to install (depmod, installkernel, initramfs generator, space in `/boot` and `/lib/modules`, Secure Boot). Prints the missing packages for apt/dnf/zypper. |
 | `RUNBOOK.md` | Step-by-step plan for one session on the target (Korean): build in the background, collect on the distro kernel, re-probe without reboot, one-shot boot of the debug kernel, collect again, compare with a working device. |
 | `tools/cxl-collect.sh` | Read-only collector, run as root (no bind/unbind/reset, no mailbox command; `--with-mbox` opts into `cxl list -vvv`): BIOS version, ACPI CEDT/SRAT/HMAT (raw + iasl), ACPI0016/0017, `/sys/firmware/memmap`, `/proc/iomem`, `lspci -vvv -xxxx` of every class-0502 function and its upstream ports, all `/sys/bus/cxl` and dax attributes, NUMA, modules, dmesg/journal and a grep summary. Runs `cxl_triage.py`, writes `SUMMARY.txt` and a ~15-line `SHORT.txt` for copying by hand, and packs everything into one tar.gz. `--enable-dyndbg` turns on dev_dbg for loaded CXL/DAX modules. |

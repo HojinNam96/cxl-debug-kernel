@@ -3,13 +3,14 @@
 **목표:** DUT가 `memN` / region / `daxX.Y`까지 가지 못하는 **첫 번째 끊긴 지점**과 그 책임 주체(DEVICE / BIOS / KERNEL)를 하루 안에 확정한다.
 
 **전제:**
-- 대상 서버는 인터넷이 안 된다. 인터넷이 되는 PC에서 **파일 1개**(`cxl-debug-kernel-offline-v7.3.tar`, 약 160 MB)를 반입한다.
-- 이 파일 안에 커널 소스 원본(kernel.org `linux-7.3.tar.xz`), 패치, 설정, 스크립트가 다 들어 있다.
-- `cxl-debug-kernel/` 폴더를 `linux-7.3.tar.xz` 옆에 둔 번들 구조 그대로 쓰면 서버에서 네트워크 접근은 한 번도 일어나지 않는다.
-- 폴더만 따로 옮겼다면 `./setup.sh --tarball /경로/linux-7.3.tar.xz`로 실행한다. tarball이 없으면 setup.sh가 git clone을 시도하다가 실패한다.
+- 대상 서버는 인터넷이 안 된다. 인터넷이 되는 PC에서 아래 둘 중 하나를 **파일 1개**로 받아 반입한다. 둘 다 Linux 7.3 커널 소스 전체(96,080개 항목)와 패치, 설정, 스크립트를 담고 있다.
+  - **저장소 압축본** `cxl-debug-kernel-main.tar.gz`: 저장소의 `linux-7.3/`에 소스 전체가 커밋돼 있고, 디버그 패치도 적용돼 있다.
+  - **오프라인 번들** `cxl-debug-kernel-offline-v7.3.tar` (약 160 MB): kernel.org 원본 `linux-7.3.tar.xz`와 키트가 들어 있다. kernel.org 체크섬과 서명으로 원본임을 확인할 수 있고, 100 MB 이하 분할본도 있다.
+- 서버에서는 `setup.sh`가 이 소스로 커널 전체(커널 이미지와 모든 모듈)를 처음부터 빌드한다. 이 과정에서 네트워크 접근은 한 번도 일어나지 않는다.
+- 번들의 `cxl-debug-kernel/` 폴더만 따로 옮겼다면 `./setup.sh --tarball /경로/linux-7.3.tar.xz`로 실행한다. 소스가 어디에도 없으면 setup.sh가 git clone을 시도하다가 실패한다.
 
 ```
-A. (인터넷 PC) 번들 + 대상 OS용 패키지 준비
+A. (인터넷 PC) 소스(저장소 압축본 또는 번들) + 대상 OS용 패키지 준비
 B. (서버) 배치 → 무결성 → 의존성 점검        tools/check-build-deps.sh
 C. (서버) 빌드 시작 (백그라운드)              ./setup.sh --build          ← D, E를 하는 동안 돈다
 D. 현재 커널에서 수집                         tools/cxl-collect.sh        ← BIOS 증거는 여기서 확보. 빌드가 안 돼도 한다
@@ -21,10 +22,15 @@ H. 결과 반출 (파일 반출이 안 되면 SHORT.txt 15줄을 옮겨 적는�
 
 ---
 
-## A. 인터넷 PC: 번들 + 패키지 준비
+## A. 인터넷 PC: 소스 + 패키지 준비
 
-1. **번들**은 다음 둘 중 하나로 준비한다.
-   - 브라우저로 받기: https://github.com/HojinNam96/cxl-debug-kernel/releases/tag/offline-v7.3
+1. **소스**는 다음 중 하나로 준비한다.
+   - **저장소 압축본** (커밋된 소스 그대로): 브라우저로 https://github.com/HojinNam96/cxl-debug-kernel/archive/refs/heads/main.tar.gz 를 받는다. 파일 이름은 `cxl-debug-kernel-main.tar.gz`이다.
+     - **Windows에서 풀거나 Windows용 git으로 clone하지 않는다.** 대소문자만 다른 커널 경로 13쌍과 symlink 102개가 깨져서 빌드가 실패한다. 받은 `.tar.gz`를 **풀지 않은 채로** 반입한다.
+     - 반입 전에 해시를 적어 둔다: `sha256sum cxl-debug-kernel-main.tar.gz` (Windows에서는 `certutil -hashfile cxl-debug-kernel-main.tar.gz SHA256`).
+     - 리눅스나 WSL에서는 `git clone --depth 1 https://github.com/HojinNam96/cxl-debug-kernel.git`로 받아도 된다. 반입할 때는 `tar -czf cxl-debug-kernel.tar.gz cxl-debug-kernel`로 묶는다.
+     - 자료전송에 100 MB 용량 제한이 있으면 아래 번들의 분할본을 쓴다.
+   - **오프라인 번들**을 브라우저로 받기: https://github.com/HojinNam96/cxl-debug-kernel/releases/tag/offline-v7.3
      - `cxl-debug-kernel-offline-v7.3.tar`
      - `cxl-debug-kernel-offline-v7.3.tar.sha256`
      - 용량 제한이 있으면 `.tar.part00`, `.tar.part01`과 `.parts.sha256`
@@ -48,6 +54,19 @@ H. 결과 반출 (파일 반출이 안 되면 SHORT.txt 15줄을 옮겨 적는�
 - 25 GiB 이상 비어 있어야 한다.
 - **일반 사용자**로 풀고 빌드한다. sudo가 필요한 것은 `cxl-collect.sh`, `reprobe-trace.sh`, `make modules_install/install`뿐이다.
 
+**저장소 압축본을 반입했을 때:**
+```bash
+mkdir -p ~/cxl && cd ~/cxl && cp <반입매체>/cxl-debug-kernel-main.tar.gz .
+findmnt -no OPTIONS -T . | grep -qw noexec && echo '이 경로는 noexec: 다른 곳에 푼다'
+sha256sum cxl-debug-kernel-main.tar.gz                    # 인터넷 PC에서 적어 둔 값과 같아야 한다
+tar -xzf cxl-debug-kernel-main.tar.gz && cd cxl-debug-kernel-main   # 묶어 온 clone이면: tar -xzf cxl-debug-kernel.tar.gz && cd cxl-debug-kernel
+ls linux-7.3/Makefile                                     # 커널 소스 전체가 여기 있다 (이미 패치됨)
+echo "KIT=$PWD" > ~/cxl.env                               # 재부팅 뒤에도 경로를 다시 찾기 위해
+mokutil --sb-state 2>/dev/null; cat /sys/kernel/security/lockdown 2>/dev/null
+tools/check-build-deps.sh                                 # 아무것도 설치하지 않고 점검만 한다
+```
+
+**번들을 반입했을 때:**
 ```bash
 mkdir -p ~/cxl && cd ~/cxl && cp <반입매체>/cxl-debug-kernel-offline-v7.3.tar* .
 findmnt -no OPTIONS -T . | grep -qw noexec && echo '이 경로는 noexec: 다른 곳에 푼다'
@@ -145,8 +164,9 @@ nohup ./setup.sh --build > setup.log 2>&1 &      # 또는 tmux 안에서 ./setup
 tail -f setup.log                                # 끝나면 ">> built 7.3.0-cxldbg in N min"
 ```
 - 동작:
-  - `../linux-7.3.tar.xz`를 `./linux-7.3`에 푼다.
-  - 패치를 적용한다.
+  - `./linux-7.3`이 있으면(저장소 압축본) 그대로 쓴다. 없으면 `../linux-7.3.tar.xz`를 `./linux-7.3`에 푼다(번들).
+  - 패치를 적용한다. 저장소 압축본은 이미 적용돼 있어서 `debug patch already applied`만 찍고 넘어간다.
+  - 커널 일부가 아니라 **커널 전체**(이미지와 모든 모듈)를 빌드한다.
   - 지금 커널의 config(`/boot/config-$(uname -r)` 또는 `/proc/config.gz`)에 디버그 옵션을 합친다.
 - 배포판 config 처리:
   - signing cert, SBAT, `WERROR`, `PANIC_ON_OOPS`, RUST는 이 디버그 빌드에 맞게 끈다.
