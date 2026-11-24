@@ -25,7 +25,7 @@ H. 결과 반출 (파일 반출이 안 되면 SHORT.txt 15줄을 옮겨 적는�
 ## A. 인터넷 PC: 소스 + 패키지 준비
 
 1. **소스**는 다음 중 하나로 준비한다.
-   - **저장소 압축본** (커밋된 소스 그대로): 브라우저로 https://github.com/HojinNam96/cxl-debug-kernel/archive/refs/heads/main.tar.gz 를 받는다. 파일 이름은 `cxl-debug-kernel-main.tar.gz`이다.
+   - **저장소 압축본** (커밋된 소스 그대로): 브라우저로 https://github.com/HojinNam96/cxl-debug-kernel/archive/refs/heads/main.tar.gz 를 받는다. 파일 이름은 `cxl-debug-kernel-main.tar.gz`이고 크기는 약 270 MB이다.
      - **Windows에서 풀거나 Windows용 git으로 clone하지 않는다.** 대소문자만 다른 커널 경로 13쌍과 symlink 102개가 깨져서 빌드가 실패한다. 받은 `.tar.gz`를 **풀지 않은 채로** 반입한다.
      - 반입 전에 해시를 적어 둔다: `sha256sum cxl-debug-kernel-main.tar.gz` (Windows에서는 `certutil -hashfile cxl-debug-kernel-main.tar.gz SHA256`).
      - 리눅스나 WSL에서는 `git clone --depth 1 https://github.com/HojinNam96/cxl-debug-kernel.git`로 받아도 된다. 반입할 때는 `tar -czf cxl-debug-kernel.tar.gz cxl-debug-kernel`로 묶는다.
