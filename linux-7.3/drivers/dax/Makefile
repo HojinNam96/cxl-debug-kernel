@@ -13,3 +13,7 @@ device_dax-y := device.o
 dax_pmem-y := pmem.o
 dax_cxl-y := cxl.o
 fsdev_dax-y := fsdev.o
+
+# DEBUG (local verification patch): dev_dbg()/pr_debug() in drivers/dax and
+# drivers/dax/hmem enabled by default.
+subdir-ccflags-y += -DDEBUG

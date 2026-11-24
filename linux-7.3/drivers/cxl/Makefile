@@ -19,3 +19,7 @@ cxl_acpi-y := acpi.o
 cxl_pmem-y := pmem.o security.o
 cxl_mem-y := mem.o
 cxl_pci-y := pci.o
+
+# DEBUG (local verification patch): compile every dev_dbg()/pr_debug() in
+# drivers/cxl and drivers/cxl/core as enabled-by-default (printed to dmesg).
+subdir-ccflags-y += -DDEBUG
