@@ -1,0 +1,2 @@
+# Never convert line endings (a CRLF checkout breaks the kernel's shell scripts and Kconfig).
+* -text
